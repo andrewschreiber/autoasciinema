@@ -1,3 +1,10 @@
+# AI Review Hackathon
+
+This project gives you nice visual and sound notifications on MacOS for Claude Code lifecycle events
+
+<img width="354" alt="image" src="https://github.com/user-attachments/assets/39b1d08e-e9c8-4071-aff2-354f3f6c7e4a" />
+
+
 # asciinema
 
 [![Build Status](https://github.com/asciinema/asciinema/actions/workflows/ci.yml/badge.svg)](https://github.com/asciinema/asciinema/actions/workflows/asciinema.yml)
