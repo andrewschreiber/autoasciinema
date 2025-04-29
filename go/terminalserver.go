@@ -81,12 +81,9 @@ func notify(message string) {
 	on run argv
 			set message to item 1 of argv
 			display notification message with title "Claude Code" sound name "Glass"
-			tell application "iTerm"
-					activate
-			end tell
 	end run
 	`
-	
+
 	// Execute the AppleScript with the message as an argument
 	cmd := exec.Command("osascript", "-e", script, message)
 	err := cmd.Run()
@@ -154,14 +151,14 @@ func handleClaudeSession(session *TerminalSession, data string) {
 	clean = strings.ReplaceAll(clean, "\r", "")
 	clean = strings.ReplaceAll(clean, "\n", "")
 
-	if strings.Contains(clean, "Do you want to proceed?") {
-		fmt.Println("[CLAUDE PROMPT] Do you want to proceed?")
-		notify("Decision: Do you want to proceed?")
-	}
+	// if strings.Contains(clean, "Do you want to proceed?") {
+		// fmt.Println("[CLAUDE PROMPT] Do you want to proceed?")
+		// notify("Decision: Do you want to proceed?")
+	// }
 
 	if strings.Contains(clean, "⏺ ") {
 		fmt.Println("[CLAUDE PROMPT] Insert mode")
-		notify("Need input")
+		notify(fmt.Sprintf("Decision needed: %s", session.ClaudeCommand))
 	}
 
 	fmt.Printf("[claude] %q\n", clean)
@@ -186,7 +183,7 @@ func handleClaudeSession(session *TerminalSession, data string) {
 		if session.ClaudeState == StateCommand && session.ClaudeCommand != "" {
 			fmt.Printf("[CLAUDE CMD END I] %s\n", session.ClaudeCommand)
 			session.ClaudeState = StatePrompt
-			notify(fmt.Sprintf("Command ended %s", session.ClaudeCommand))
+			// notify(fmt.Sprintf("Command Ended: %s", session.ClaudeCommand))
 			session.ClaudeCommand = ""
 			session.ClaudeActive = false
 		}
