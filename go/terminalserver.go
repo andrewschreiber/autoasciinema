@@ -66,6 +66,7 @@ type TerminalSession struct {
 var (
 	oscDRegexp = regexp.MustCompile(`\x1b]133;D;(\d+)\x07`)
 	oscPattern = regexp.MustCompile(`^\x1b\](133;[CD]|1337;RemoteHost=|1337;CurrentDir=)`)
+	ansiRegexp = regexp.MustCompile(`\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\a]*\a|\x1b\][^\x07]*\x07|\x1b\][^\x1b]*\x1b\\`)
 )
 
 func looksLikeJSON(s string) bool {
@@ -105,6 +106,42 @@ func extractCommandFromOSC133B(line string) string {
 func isRealOutput(data string) bool {
 	// Skip OSC 133;C, 133;D, 1337;RemoteHost, 1337;CurrentDir, etc
 	return !oscPattern.MatchString(data) && strings.TrimSpace(data) != ""
+}
+
+func stripANSI(input string) string {
+	return ansiRegexp.ReplaceAllString(input, "")
+}
+
+func removeBoxDrawingChars(s string) string {
+	boxChars := []rune{'╭', '╮', '╯', '╰', '│', '─'}
+	replacer := s
+	for _, c := range boxChars {
+		replacer = strings.ReplaceAll(replacer, string(c), "")
+	}
+	return replacer
+}
+
+func handleClaudeSession(session *TerminalSession, data string) {
+	clean := stripANSI(data)
+
+	// Remove box drawing characters
+	clean = removeBoxDrawingChars(clean)
+
+	fmt.Printf("[claude] %q\n", clean)
+
+	// Detect command end: look for a line like '-- INSERT --' or empty line after output
+	if strings.Contains(clean, "-- INSERT --") {
+		if session.State == StateCommand && session.CommandString != "" {
+			fmt.Printf("[CLAUDE CMD END] %s\n", session.CommandString)
+			session.State = StatePrompt
+		}
+		return
+	}
+
+	// Print output lines only if in command state
+	if session.State == StateCommand && clean != "" {
+		fmt.Println(clean)
+	}
 }
 
 func main() {
@@ -191,8 +228,9 @@ func handleConnection(conn net.Conn, wg *sync.WaitGroup, terminalInfo map[net.Co
 			}
 
 			// [raw <pid>] logging
-			fmt.Printf("[raw %d] %q\n", pidInt, data)
+			// fmt.Printf("[raw %d] %q\n", pidInt, data)
 
+			fmt.Printf("Command string: %q\n", session.CommandString)
 			switch {
 			case strings.Contains(data, "\x1b]133;B\a"):
 				cmd := extractCommandFromOSC133B(data)
@@ -202,8 +240,11 @@ func handleConnection(conn net.Conn, wg *sync.WaitGroup, terminalInfo map[net.Co
 					session.State = StateCommand // Set state to Command
 					session.CommandBuffer = nil  // Clear previous buffer
 				}
+			case session.CommandString == "claude":
+				fmt.Printf("[?CLAUDE] %q\n", data)
+				handleClaudeSession(session, data)
 			case strings.Contains(data, "\x1b]133;D"):
-				fmt.Printf("[debug] OSC 133;D: CommandBuffer=%v\n", session.CommandBuffer)
+				// fmt.Printf("[debug] OSC 133;D: CommandBuffer=%v\n", session.CommandBuffer)
 				session.State = StatePrompt
 				// Do not append OSC 133;D to CommandBuffer, just handle exit code
 				exitCode := extractExitCode(data)
