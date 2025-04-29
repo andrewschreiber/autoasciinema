@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
@@ -61,6 +62,11 @@ type TerminalSession struct {
 	LastExitCode  int
 	CommandString string
 	CurrentInput  string
+
+	// Claude Code state
+	ClaudeActive  bool
+	ClaudeCommand string
+	ClaudeState   SessionState
 }
 
 var (
@@ -68,6 +74,27 @@ var (
 	oscPattern = regexp.MustCompile(`^\x1b\](133;[CD]|1337;RemoteHost=|1337;CurrentDir=)`)
 	ansiRegexp = regexp.MustCompile(`\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\a]*\a|\x1b\][^\x07]*\x07|\x1b\][^\x1b]*\x1b\\`)
 )
+
+func notify(message string) {
+	// Create a more advanced AppleScript
+	script := `
+	on run argv
+			set message to item 1 of argv
+			display notification message with title "Claude Code" sound name "Glass"
+			tell application "iTerm"
+					activate
+			end tell
+	end run
+	`
+	
+	// Execute the AppleScript with the message as an argument
+	cmd := exec.Command("osascript", "-e", script, message)
+	err := cmd.Run()
+	if err != nil {
+			log.Printf("Error executing AppleScript: %v", err)
+	}
+}
+
 
 func looksLikeJSON(s string) bool {
 	s = strings.TrimSpace(s)
@@ -123,23 +150,51 @@ func removeBoxDrawingChars(s string) string {
 
 func handleClaudeSession(session *TerminalSession, data string) {
 	clean := stripANSI(data)
-
-	// Remove box drawing characters
 	clean = removeBoxDrawingChars(clean)
+	clean = strings.ReplaceAll(clean, "\r", "")
+	clean = strings.ReplaceAll(clean, "\n", "")
+
+	if strings.Contains(clean, "Do you want to proceed?") {
+		fmt.Println("[CLAUDE PROMPT] Do you want to proceed?")
+		notify("Decision: Do you want to proceed?")
+	}
+
+	if strings.Contains(clean, "⏺ ") {
+		fmt.Println("[CLAUDE PROMPT] Insert mode")
+		notify("Need input")
+	}
 
 	fmt.Printf("[claude] %q\n", clean)
 
+	// Detect command start: look for promptline like '> search hi' (after stripping)
+	if strings.HasPrefix(clean, "> ") {
+		cmd := strings.TrimSpace(strings.TrimPrefix(clean, "> "))
+		if session.ClaudeState != StateCommand || session.ClaudeCommand != cmd {
+			if session.ClaudeState == StateCommand && session.ClaudeCommand != "" {
+				fmt.Printf("[CLAUDE CMD END >] %s\n", session.ClaudeCommand)
+			}
+			fmt.Printf("[CLAUDE CMD START] %s\n", cmd)
+			session.ClaudeState = StateCommand
+			session.ClaudeCommand = cmd
+			session.ClaudeActive = true
+		}
+		return // Don't print the prompt line itself
+	}
+
 	// Detect command end: look for a line like '-- INSERT --' or empty line after output
-	if strings.Contains(clean, "-- INSERT --") {
-		if session.State == StateCommand && session.CommandString != "" {
-			fmt.Printf("[CLAUDE CMD END] %s\n", session.CommandString)
-			session.State = StatePrompt
+	if strings.Contains(clean, "8;2;136;136;136m  -- INSERT --") {
+		if session.ClaudeState == StateCommand && session.ClaudeCommand != "" {
+			fmt.Printf("[CLAUDE CMD END I] %s\n", session.ClaudeCommand)
+			session.ClaudeState = StatePrompt
+			notify(fmt.Sprintf("Command ended %s", session.ClaudeCommand))
+			session.ClaudeCommand = ""
+			session.ClaudeActive = false
 		}
 		return
 	}
 
-	// Print output lines only if in command state
-	if session.State == StateCommand && clean != "" {
+	// Print output lines only if in Claude command state
+	if session.ClaudeState == StateCommand && clean != "" {
 		fmt.Println(clean)
 	}
 }
@@ -230,7 +285,6 @@ func handleConnection(conn net.Conn, wg *sync.WaitGroup, terminalInfo map[net.Co
 			// [raw <pid>] logging
 			// fmt.Printf("[raw %d] %q\n", pidInt, data)
 
-			fmt.Printf("Command string: %q\n", session.CommandString)
 			switch {
 			case strings.Contains(data, "\x1b]133;B\a"):
 				cmd := extractCommandFromOSC133B(data)
@@ -241,7 +295,7 @@ func handleConnection(conn net.Conn, wg *sync.WaitGroup, terminalInfo map[net.Co
 					session.CommandBuffer = nil  // Clear previous buffer
 				}
 			case session.CommandString == "claude":
-				fmt.Printf("[?CLAUDE] %q\n", data)
+				// fmt.Printf("[?CLAUDE] %q\n", data)
 				handleClaudeSession(session, data)
 			case strings.Contains(data, "\x1b]133;D"):
 				// fmt.Printf("[debug] OSC 133;D: CommandBuffer=%v\n", session.CommandBuffer)
