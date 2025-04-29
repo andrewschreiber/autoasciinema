@@ -67,6 +67,7 @@ type TerminalSession struct {
 	ClaudeActive  bool
 	ClaudeCommand string
 	ClaudeState   SessionState
+	ClaudeNotifiedInsert bool
 }
 
 var (
@@ -80,7 +81,7 @@ func notify(message string) {
 	script := `
 	on run argv
 			set message to item 1 of argv
-			display notification message with title "Claude Code" sound name "Glass"
+			display notification message with title "✓ Claude Code - Next Step Ready " sound name "Glass"
 	end run
 	`
 
@@ -158,7 +159,10 @@ func handleClaudeSession(session *TerminalSession, data string) {
 
 	if strings.Contains(clean, "⏺ ") {
 		fmt.Println("[CLAUDE PROMPT] Insert mode")
-		notify(fmt.Sprintf("Decision needed: %s", session.ClaudeCommand))
+		if !session.ClaudeNotifiedInsert && session.ClaudeCommand != "" {
+			notify(fmt.Sprintf("%s", session.ClaudeCommand))
+			session.ClaudeNotifiedInsert = true
+		}
 	}
 
 	fmt.Printf("[claude] %q\n", clean)
@@ -166,6 +170,10 @@ func handleClaudeSession(session *TerminalSession, data string) {
 	// Detect command start: look for promptline like '> search hi' (after stripping)
 	if strings.HasPrefix(clean, "> ") {
 		cmd := strings.TrimSpace(strings.TrimPrefix(clean, "> "))
+		// trim anything after "·", which may not present
+		if strings.Contains(cmd, "·") {
+			cmd = strings.Split(cmd, "·")[0]
+		}
 		if session.ClaudeState != StateCommand || session.ClaudeCommand != cmd {
 			if session.ClaudeState == StateCommand && session.ClaudeCommand != "" {
 				fmt.Printf("[CLAUDE CMD END >] %s\n", session.ClaudeCommand)
@@ -174,6 +182,7 @@ func handleClaudeSession(session *TerminalSession, data string) {
 			session.ClaudeState = StateCommand
 			session.ClaudeCommand = cmd
 			session.ClaudeActive = true
+			session.ClaudeNotifiedInsert = false
 		}
 		return // Don't print the prompt line itself
 	}
@@ -184,8 +193,9 @@ func handleClaudeSession(session *TerminalSession, data string) {
 			fmt.Printf("[CLAUDE CMD END I] %s\n", session.ClaudeCommand)
 			session.ClaudeState = StatePrompt
 			// notify(fmt.Sprintf("Command Ended: %s", session.ClaudeCommand))
-			session.ClaudeCommand = ""
+			session.ClaudeCommand =""
 			session.ClaudeActive = false
+			session.ClaudeNotifiedInsert = false
 		}
 		return
 	}
