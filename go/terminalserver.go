@@ -159,10 +159,10 @@ func handleClaudeSession(session *TerminalSession, data string) {
 
 	if strings.Contains(clean, "⏺ ") {
 		fmt.Println("[CLAUDE PROMPT] Insert mode")
-		if !session.ClaudeNotifiedInsert && session.ClaudeCommand != "" {
-			notify(fmt.Sprintf("%s", session.ClaudeCommand))
-			session.ClaudeNotifiedInsert = true
-		}
+		// if !session.ClaudeNotifiedInsert && session.ClaudeCommand != "" {
+		// 	notify(fmt.Sprintf("%s", session.ClaudeCommand))
+		// 	session.ClaudeNotifiedInsert = true
+		// }
 	}
 
 	fmt.Printf("[claude] %q\n", clean)
@@ -191,6 +191,11 @@ func handleClaudeSession(session *TerminalSession, data string) {
 	if strings.Contains(clean, "8;2;136;136;136m  -- INSERT --") {
 		if session.ClaudeState == StateCommand && session.ClaudeCommand != "" {
 			fmt.Printf("[CLAUDE CMD END I] %s\n", session.ClaudeCommand)
+			if !session.ClaudeNotifiedInsert && session.ClaudeCommand != "" {
+				notify(fmt.Sprintf("%s", session.ClaudeCommand))
+				session.ClaudeNotifiedInsert = true
+			}
+			
 			session.ClaudeState = StatePrompt
 			// notify(fmt.Sprintf("Command Ended: %s", session.ClaudeCommand))
 			session.ClaudeCommand =""
