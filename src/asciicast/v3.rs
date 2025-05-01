@@ -17,6 +17,7 @@ struct V3Header {
     command: Option<String>,
     title: Option<String>,
     env: Option<HashMap<String, String>>,
+    child_pid: Option<u32>,
 }
 
 #[derive(Deserialize)]
@@ -99,6 +100,7 @@ impl Parser {
             command: self.header.command.clone(),
             title: self.header.title.clone(),
             env: self.header.env.clone(),
+            child_pid: self.header.child_pid,
         };
 
         let events = Box::new(lines.filter_map(move |line| self.parse_line(line)));
@@ -152,7 +154,7 @@ impl Parser {
         let time = self.prev_time + event.time;
         self.prev_time = time;
 
-        Ok(Event { time, data })
+        Ok(Event { time, data, child_pid: None })
     }
 }
 
@@ -213,12 +215,16 @@ impl V3Encoder {
         let time = event.time - self.prev_time;
         self.prev_time = event.time;
 
-        Ok(format!(
-            "[{}, {}, {}]",
-            format_time(time),
-            serde_json::to_string(&code)?,
-            data,
-        ))
+        let time_str = format_time(time);
+        let code_str = serde_json::to_string(&code)?;
+
+        let output = if let Some(child_pid) = event.child_pid {
+            format!("[{time_str}, {code_str}, {data}, {}]", child_pid)
+        } else {
+            format!("[{time_str}, {code_str}, {data}]")
+        };
+
+        Ok(output)
     }
 }
 
@@ -266,6 +272,10 @@ impl serde::Serialize for V3Header {
             len += 1;
         }
 
+        if self.child_pid.is_some() {
+            len += 1;
+        }
+
         let mut map = serializer.serialize_map(Some(len))?;
         map.serialize_entry("version", &3)?;
         map.serialize_entry("term", &self.term)?;
@@ -291,6 +301,11 @@ impl serde::Serialize for V3Header {
                 map.serialize_entry("env", &env)?;
             }
         }
+
+        if let Some(child_pid) = self.child_pid {
+            map.serialize_entry("child_pid", &child_pid)?;
+        }
+
         map.end()
     }
 }
@@ -420,6 +435,7 @@ impl From<&Header> for V3Header {
             command: header.command.clone(),
             title: header.title.clone(),
             env: header.env.clone(),
+            child_pid: header.child_pid,
         }
     }
 }

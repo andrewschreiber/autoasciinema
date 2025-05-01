@@ -36,6 +36,7 @@ impl session::OutputStarter for FileWriterStarter {
         time: SystemTime,
         tty_size: TtySize,
         theme: Option<TtyTheme>,
+        child_pid: u32,
     ) -> io::Result<Box<dyn session::Output>> {
         let timestamp = time.duration_since(UNIX_EPOCH).unwrap().as_secs();
 
@@ -50,6 +51,7 @@ impl session::OutputStarter for FileWriterStarter {
             command: self.metadata.command.as_ref().cloned(),
             title: self.metadata.title.as_ref().cloned(),
             env: self.metadata.env.as_ref().cloned(),
+            child_pid: Some(child_pid),
         };
 
         if let Err(e) = self.writer.write_all(&self.encoder.header(&header)) {
@@ -91,12 +93,11 @@ impl session::Output for FileWriter {
 impl From<session::Event> for asciicast::Event {
     fn from(event: session::Event) -> Self {
         match event {
-            session::Event::Output(time, text) => asciicast::Event::output(time, text),
-            session::Event::Input(time, text) => asciicast::Event::input(time, text),
-            session::Event::Resize(time, tty_size) => {
-                asciicast::Event::resize(time, tty_size.into())
-            }
-            session::Event::Marker(time, label) => asciicast::Event::marker(time, label),
+            session::Event::Output(time, text, pid) => asciicast::Event::output(time, text, pid),
+            session::Event::Input(time, text, pid) => asciicast::Event::input(time, text, pid),
+            session::Event::Resize(time, tty_size, pid) =>
+                asciicast::Event::resize(time, tty_size.into(), pid),
+            session::Event::Marker(time, label, pid) => asciicast::Event::marker(time, label, pid),
         }
     }
 }
