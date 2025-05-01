@@ -165,7 +165,7 @@ func handleClaudeSession(session *TerminalSession, data string) {
 		}
 	}
 
-	fmt.Printf("[claude] %q\n", clean)
+	// fmt.Printf("[claude] %q\n", clean)
 
 	// Detect command start: look for promptline like '> search hi' (after stripping)
 	if strings.HasPrefix(clean, "> ") {
@@ -295,7 +295,13 @@ func handleConnection(conn net.Conn, wg *sync.WaitGroup, terminalInfo map[net.Co
 			}
 
 			// [raw <pid>] logging
-			// fmt.Printf("[raw %d] %q\n", pidInt, data)
+
+			cleaner := removeBoxDrawingChars(data)
+			//cleaner = stripANSI(cleaner)
+			//cleaner = strings.ReplaceAll(cleaner, "\r", "")
+			//cleaner = strings.ReplaceAll(cleaner, "\n", "")
+
+			fmt.Printf("[raw %d] %q\n", pidInt, cleaner)
 
 			switch {
 			case strings.Contains(data, "\x1b]133;B\a"):
