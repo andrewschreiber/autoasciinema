@@ -61,15 +61,16 @@ const (
 )
 
 type TerminalSession struct {
-	PID           int
-	State         SessionState
-	CommandBuffer []string
-	PromptBuffer  []string
-	LastExitCode  int64
-	CommandString string
-	CurrentInput  string
-	StartTime     time.Time
-	CommandId     string
+	PID              int
+	State            SessionState
+	CommandBuffer    []string
+	PromptBuffer     []string
+	LastExitCode     int64
+	CommandString    string
+	CurrentInput     string
+	StartTime        time.Time
+	CommandId        string
+	ExpectingCommand bool // Flag to indicate we're expecting a command on the next line
 }
 
 var (
@@ -116,12 +117,14 @@ func extractExitCode(data string) int64 {
 
 // Add this function for extracting the command from OSC 133;B
 func extractCommandFromOSC133B(line string) string {
-	start := strings.Index(line, "\x1b]133;B\a")
+	osc133B := "\x1b]133;B\a"
+	start := strings.Index(line, osc133B)
 	if start == -1 {
 		return ""
 	}
-	afterB := line[start+len("\x1b]133;B\a"):]
-	end := strings.Index(afterB, "\x1b[K")
+	afterB := line[start+len(osc133B):]
+	eraseToEndOfLine := "\x1b[K"
+	end := strings.Index(afterB, eraseToEndOfLine)
 	if end != -1 {
 		afterB = afterB[:end]
 	}
@@ -365,6 +368,7 @@ func handleConnection(conn net.Conn, wg *sync.WaitGroup, terminalInfo map[net.Co
 					session.CommandBuffer = nil  // Clear previous buffer
 					session.StartTime = time.Now()
 					session.CommandId = fmt.Sprintf("%dN-%d", time.Now().Unix(), pidInt)
+					session.ExpectingCommand = false // Reset the flag as we found the command
 					// Send start event (no exitCode)
 					sendEvent(EventPayload{
 						Event:     "start",
@@ -374,6 +378,13 @@ func handleConnection(conn net.Conn, wg *sync.WaitGroup, terminalInfo map[net.Co
 						Username:  username,
 						Directory: directory,
 					})
+				} else {
+					// We saw OSC 133;B but no command on this line, expect it on the next line
+					session.ExpectingCommand = true
+					session.State = StateCommand
+					session.CommandBuffer = nil
+					session.StartTime = time.Now()
+					session.CommandId = fmt.Sprintf("%dN-%d", time.Now().Unix(), pidInt)
 				}
 			case strings.Contains(data, "\x1b]133;D"):
 				fmt.Printf("[debug] OSC 133;D: CommandBuffer=%v\n", session.CommandBuffer)
@@ -409,7 +420,28 @@ func handleConnection(conn net.Conn, wg *sync.WaitGroup, terminalInfo map[net.Co
 				session.StartTime = time.Time{}
 				session.CurrentInput = ""
 			default:
-				if session.State == StateCommand {
+				if session.ExpectingCommand {
+					// This line might contain the command we're expecting
+					session.ExpectingCommand = false // Reset the flag
+					trimmed := strings.TrimSpace(data)
+					if strings.HasSuffix(trimmed, "\x1b[K") {
+						// Common pattern for command line ends with escape sequence for erasing to end of line
+						cmd := strings.TrimSuffix(trimmed, "\x1b[K")
+						if cmd != "" {
+							session.CommandString = cmd
+							fmt.Printf("[COMMAND START +] Found on next line: %q\n", cmd)
+							// Send start event (no exitCode)
+							sendEvent(EventPayload{
+								Event:     "start",
+								Command:   cmd,
+								CommandId: session.CommandId,
+								Shell:     shell,
+								Username:  username,
+								Directory: directory,
+							})
+						}
+					}
+				} else if session.State == StateCommand {
 					if isRealOutput(data) {
 						stepName, detail := matchStepEvent(data)
 						if stepName != "" {
