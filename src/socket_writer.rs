@@ -7,17 +7,15 @@ use std::path::PathBuf;
 
 use tokio::net::UnixStream;
 use tokio::runtime::Handle;
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::mpsc;
 use tokio::io::AsyncWriteExt;
 
 use crate::asciicast;
 use crate::encoder;
 use crate::session;
 use crate::tty::{TtySize, TtyTheme};
-use crate::status;
 
 pub struct SocketWriterStarter {
-    pub socket_path: String,
     pub encoder: Box<dyn encoder::Encoder + Send>,
     pub metadata: Metadata,
     pub handle: Handle,
@@ -94,7 +92,6 @@ impl session::OutputStarter for SocketWriterStarter {
             shell: self.metadata.shell.clone(),
         };
         let mut encoder = self.encoder;
-        let socket_path = self.socket_path.clone();
         let handle = self.handle.clone();
         let header_bytes = encoder.header(&header);
         let (sender, mut receiver) = mpsc::channel::<Vec<u8>>(100); // buffer size 100, adjust as needed
@@ -102,10 +99,11 @@ impl session::OutputStarter for SocketWriterStarter {
         // Spawn background async task for socket writing
         handle.spawn(async move {
             let mut stream: Option<UnixStream> = None;
+            let socket_path = "/tmp/focusbase.sock";
             // Try initial connect and send header
             loop {
                 if stream.is_none() {
-                    match UnixStream::connect(socket_path.clone()).await {
+                    match UnixStream::connect(socket_path).await {
                         Ok(mut s) => {
                             if s.write_all(&header_bytes).await.is_ok() {
                                 stream = Some(s);

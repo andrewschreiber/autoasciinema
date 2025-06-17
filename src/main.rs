@@ -54,7 +54,6 @@ fn main() -> anyhow::Result<()> {
                 serve: None,
                 relay: None,
                 log_file: None,
-                socket_path: None,
             };
 
             cmd.run(&config, &config.cmd_rec())
@@ -77,7 +76,6 @@ fn main() -> anyhow::Result<()> {
                 serve: stream.serve,
                 relay: stream.relay,
                 log_file: stream.log_file,
-                socket_path: None,
             };
 
             cmd.run(&config, &config.cmd_stream())

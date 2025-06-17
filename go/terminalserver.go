@@ -173,7 +173,7 @@ func sendEvent(payload EventPayload) {
 	}
 	payload.SourceName = sourceName
 	payload.SourceVersion = sourceVersion
-	url := "http://127.0.0.1:54321/"
+	url := "http://127.0.0.1:51645/"
 	log.Printf("Sending %s event: %+v", payload.Event, payload)
 	jsonBytes, err := json.Marshal(payload)
 	if err != nil {
@@ -244,7 +244,7 @@ func matchStepEvent(line string) (string, map[string]string) {
 }
 
 func main() {
-	socketPath := "/tmp/test.sock"
+	socketPath := "/tmp/focusbase.sock"
 	
 	// Remove socket if it already exists
 	if err := os.RemoveAll(socketPath); err != nil {

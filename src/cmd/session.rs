@@ -136,55 +136,52 @@ impl cli::Session {
 
         let mut outputs: Vec<Box<dyn session::OutputStarter>> = Vec::new();
 
-        // If socket_path is set, use SocketWriterStarter and suppress all logs and file outputs
-        if let Some(socket_path) = &self.socket_path {
-            let format = self.format.unwrap_or(Format::AsciicastV3);
-            let _socket_term_type = self.get_term_type();
-            let _socket_term_version = self.get_term_version()?;
-            let encoder: Box<dyn crate::encoder::Encoder + Send> = match format {
-                Format::AsciicastV3 => Box::new(AsciicastV3Encoder::new(false)),
-                Format::AsciicastV2 => Box::new(AsciicastV2Encoder::new(false, 0)),
-                Format::Raw => Box::new(RawEncoder::new(false)),
-                Format::Txt => Box::new(TextEncoder::new()),
-            };
-            let username = std::env::var("USER").ok();
-            let directory = std::env::current_dir().ok().and_then(|p| p.to_str().map(|s| s.to_string()));
-            let shell = std::env::var("SHELL").ok();
-            let metadata = SocketMetadata {
-                term_type: _socket_term_type,
-                term_version: _socket_term_version,
-                idle_time_limit: self.idle_time_limit.or(cmd_config.idle_time_limit),
-                command: self.get_command(cmd_config),
-                title: self.title.clone(),
-                env: Some(env.clone()),
-                username,
-                directory,
-                shell,
-            };
-            
-            let socket_writer = SocketWriterStarter {
-                socket_path: socket_path.clone(),
-                encoder,
-                metadata,
-                handle: runtime.handle().clone(),
-            };
-            outputs.push(Box::new(socket_writer));
-        } else {
-            let _term_type = self.get_term_type();
-            let _term_version = self.get_term_version()?;
-            if server.is_some() || forwarder.is_some() {
-                let output = stream.start(runtime.handle().clone());
-                outputs.push(Box::new(output));
-            }
-            if let Some(output) = file_writer {
-                outputs.push(Box::new(output));
-            }
-            if outputs.is_empty() {
-                status::warning!("No outputs enabled, consider using -o, -s, or -r");
-            }
-            if command.is_none() {
-                status::info!("Press <ctrl+d> or type 'exit' to end");
-            }
+        // Always use SocketWriterStarter
+        let format = self.format.unwrap_or(Format::AsciicastV3);
+        let _socket_term_type = self.get_term_type();
+        let _socket_term_version = self.get_term_version()?;
+        let encoder: Box<dyn crate::encoder::Encoder + Send> = match format {
+            Format::AsciicastV3 => Box::new(AsciicastV3Encoder::new(false)),
+            Format::AsciicastV2 => Box::new(AsciicastV2Encoder::new(false, 0)),
+            Format::Raw => Box::new(RawEncoder::new(false)),
+            Format::Txt => Box::new(TextEncoder::new()),
+        };
+        let username = std::env::var("USER").ok();
+        let directory = std::env::current_dir().ok().and_then(|p| p.to_str().map(|s| s.to_string()));
+        let shell = std::env::var("SHELL").ok();
+        let metadata = SocketMetadata {
+            term_type: _socket_term_type,
+            term_version: _socket_term_version,
+            idle_time_limit: self.idle_time_limit.or(cmd_config.idle_time_limit),
+            command: self.get_command(cmd_config),
+            title: self.title.clone(),
+            env: Some(env.clone()),
+            username,
+            directory,
+            shell,
+        };
+        
+        let socket_writer = SocketWriterStarter {
+            encoder,
+            metadata,
+            handle: runtime.handle().clone(),
+        };
+        outputs.push(Box::new(socket_writer));
+
+        let _term_type = self.get_term_type();
+        let _term_version = self.get_term_version()?;
+        if server.is_some() || forwarder.is_some() {
+            let output = stream.start(runtime.handle().clone());
+            outputs.push(Box::new(output));
+        }
+        if let Some(output) = file_writer {
+            outputs.push(Box::new(output));
+        }
+        if outputs.is_empty() {
+            status::warning!("No outputs enabled, consider using -o, -s, or -r");
+        }
+        if command.is_none() {
+            status::info!("Press <ctrl+d> or type 'exit' to end");
         }
 
         let exec_command = build_exec_command(command.as_ref().cloned());
