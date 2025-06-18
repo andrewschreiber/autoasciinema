@@ -97,7 +97,7 @@ impl cli::Session {
             self.init_logging()?;
         }
 
-        status::info!("asciinema session started");
+        // status::info!("asciinema session started");
 
         if let Some(path) = path {
             status::info!("Recording to {}", path);
@@ -181,7 +181,7 @@ impl cli::Session {
             status::warning!("No outputs enabled, consider using -o, -s, or -r");
         }
         if command.is_none() {
-            status::info!("Press <ctrl+d> or type 'exit' to end");
+            // status::info!("Press <ctrl+d> or type 'exit' to end");
         }
 
         let exec_command = build_exec_command(command.as_ref().cloned());
