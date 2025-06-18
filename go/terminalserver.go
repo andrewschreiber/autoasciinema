@@ -270,7 +270,7 @@ func main() {
 	// Start HTTP server for regex filters
 	go func() {
 		http.HandleFunc("/regexfilters", regexFiltersHandler)
-		log.Fatal(http.ListenAndServe(":54322", nil))
+		log.Fatal(http.ListenAndServe(":51646", nil))
 	}()
 	
 	for {
