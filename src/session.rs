@@ -39,6 +39,7 @@ pub enum Event {
     Input(u64, String, Option<u32>),
     Resize(u64, TtySize, Option<u32>),
     Marker(u64, String, Option<u32>),
+    Close(u64, i32, Option<u32>), // time, exit_code, child_pid
 }
 
 impl<N: Notifier> SessionStarter<N> {
@@ -214,6 +215,12 @@ impl<N: Notifier> pty::Handler for Session<N> {
             self.tty_size = tty_size;
         }
 
+        true
+    }
+
+    fn close(&mut self, time: Duration, exit_code: i32) -> bool {
+        let msg = Event::Close(self.elapsed_time(time), exit_code, Some(self.child_pid));
+        self.sender.send(msg).expect("close send should succeed");
         true
     }
 

@@ -137,5 +137,18 @@ fn serialize_event(event: Event, prev_event_time: u64) -> (Vec<u8>, u64) {
 
             (msg, time)
         }
+
+        Close(id, time, exit_code) => {
+            let id_bytes = leb128::encode(id);
+            let time_bytes = leb128::encode(time - prev_event_time);
+            let exit_code_bytes = leb128::encode(exit_code as u32);
+
+            let mut msg = vec![b'c'];
+            msg.extend_from_slice(&id_bytes);
+            msg.extend_from_slice(&time_bytes);
+            msg.extend_from_slice(&exit_code_bytes);
+
+            (msg, time)
+        }
     }
 }

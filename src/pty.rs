@@ -32,6 +32,7 @@ pub trait Handler {
     fn output(&mut self, time: Duration, data: &[u8]) -> bool;
     fn input(&mut self, time: Duration, data: &[u8]) -> bool;
     fn resize(&mut self, time: Duration, tty_size: TtySize) -> bool;
+    fn close(&mut self, time: Duration, exit_code: i32) -> bool;
     fn stop(self) -> Self;
 }
 
@@ -76,12 +77,17 @@ fn handle_parent<T: Tty, H: Handler>(
         }
     };
 
-    match wait_result {
-        Ok(WaitStatus::Exited(_pid, status)) => Ok(status),
-        Ok(WaitStatus::Signaled(_pid, signal, ..)) => Ok(128 + signal as i32),
-        Ok(_) => Ok(1),
-        Err(e) => Err(anyhow::anyhow!(e)),
-    }
+    let exit_code = match wait_result {
+        Ok(WaitStatus::Exited(_pid, status)) => status,
+        Ok(WaitStatus::Signaled(_pid, signal, ..)) => 128 + signal as i32,
+        Ok(_) => 1,
+        Err(e) => return Err(anyhow::anyhow!(e)),
+    };
+
+    // Send close event before returning
+    handler.close(epoch.elapsed(), exit_code);
+
+    Ok(exit_code)
 }
 
 const BUF_SIZE: usize = 128 * 1024;
@@ -418,6 +424,10 @@ mod tests {
         }
 
         fn resize(&mut self, _time: Duration, _size: TtySize) -> bool {
+            true
+        }
+
+        fn close(&mut self, _time: Duration, _exit_code: i32) -> bool {
             true
         }
 

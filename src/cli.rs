@@ -163,6 +163,10 @@ pub struct Stream {
     /// Log file path
     #[arg(long)]
     pub log_file: Option<PathBuf>,
+
+    /// Enable debug logging for focusbase features
+    #[arg(long)]
+    pub debug_focusbase: bool,
 }
 
 #[derive(Debug, Args)]
@@ -226,6 +230,10 @@ pub struct Session {
     /// Log file path
     #[arg(long)]
     pub log_file: Option<PathBuf>,
+
+    /// Enable debug logging for focusbase features
+    #[arg(long)]
+    pub debug_focusbase: bool,
 }
 
 #[derive(Debug, Args)]

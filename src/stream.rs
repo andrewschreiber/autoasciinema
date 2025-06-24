@@ -45,6 +45,7 @@ pub enum Event {
     Input(u64, u64, String),
     Resize(u64, u64, TtySize),
     Marker(u64, u64, String),
+    Close(u64, u64, i32),
 }
 
 impl Stream {
@@ -109,6 +110,11 @@ async fn run(
 
                             session::Event::Marker(time, label, _) => {
                                 let _ = broadcast_tx.send(Event::Marker(last_event_id, time, label));
+                                stream_time = time;
+                            }
+
+                            session::Event::Close(time, exit_code, _) => {
+                                let _ = broadcast_tx.send(Event::Close(last_event_id, time, exit_code));
                                 stream_time = time;
                             }
                         }

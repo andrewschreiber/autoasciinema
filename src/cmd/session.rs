@@ -6,6 +6,7 @@ use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process;
 use std::time::Duration;
+use std::io::Write;
 
 use anyhow::{anyhow, bail, Context, Result};
 use chrono::Local;
@@ -190,6 +191,15 @@ impl cli::Session {
         {
             let starter = SessionStarter::new(outputs, record_input, keys, notifier);
             let mut tty = self.get_tty(true)?;
+            
+            // Get child PID before exec for logging
+            let child_pid = process::id();
+            
+            // Log terminal session if debug flag is enabled
+            if self.debug_focusbase {
+                let _ = log_terminal_session(child_pid);
+            }
+            
             pty::exec(&exec_command, &exec_extra_env, &mut tty, starter)?;
         }
 
@@ -566,4 +576,54 @@ fn build_exec_extra_env(relay_id: Option<&String>) -> HashMap<String, String> {
 
 fn get_parent_session_relay_id() -> Option<String> {
     env::var("ASCIINEMA_RELAY_ID").ok()
+}
+
+fn log_terminal_session(child_pid: u32) -> std::io::Result<()> {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/".to_string());
+    let mut log_dir = PathBuf::from(&home);
+    log_dir.push(".focusbase/logs");
+    
+    // Create directory if it doesn't exist
+    fs::create_dir_all(&log_dir)?;
+    
+    let mut log_file = log_dir;
+    log_file.push("shellproxy.log");
+    
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_file)?;
+    
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    
+    writeln!(file, "=== New Terminal Session ===")?;
+    writeln!(file, "Timestamp: {} (Unix)", timestamp)?;
+    writeln!(file, "PID: {}", child_pid)?;
+    
+    // Log ALL environment variables, not just the filtered ones
+    writeln!(file, "Environment Variables:")?;
+    let mut all_env: Vec<_> = std::env::vars().collect();
+    all_env.sort_by_key(|(k, _)| k.clone());
+    for (key, value) in all_env {
+        writeln!(file, "  {}={}", key, value)?;
+    }
+    
+    if let Ok(username) = std::env::var("USER") {
+        writeln!(file, "Username: {}", username)?;
+    }
+    if let Ok(directory) = std::env::current_dir() {
+        if let Some(dir_str) = directory.to_str() {
+            writeln!(file, "Directory: {}", dir_str)?;
+        }
+    }
+    if let Ok(shell) = std::env::var("SHELL") {
+        writeln!(file, "Shell: {}", shell)?;
+    }
+    
+    writeln!(file, "---")?;
+    file.flush()?;
+    Ok(())
 }

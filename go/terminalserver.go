@@ -330,146 +330,7 @@ func handleConnection(conn net.Conn, wg *sync.WaitGroup, terminalInfo map[net.Co
 			}
 		}
 		if looksLikeJSON(trimmed) && trimmed[0] == '[' {
-			var arr []interface{}
-			err := json.Unmarshal([]byte(trimmed), &arr)
-			if err != nil || len(arr) < 4 {
-				fmt.Printf("[unknown] %s\n", trimmed)
-				continue
-			}
-			pid, okPid := arr[3].(float64)
-			data, okData := arr[2].(string)
-			if !okPid || !okData {
-				fmt.Printf("[unknown] %s\n", trimmed)
-				continue
-			}
-			pidInt := int(pid)
-			session, exists := sessions[pidInt]
-			if !exists {
-				session = &TerminalSession{PID: pidInt, State: StateIdle}
-				sessions[pidInt] = session
-			}
-
-			// [raw <pid>] logging
-			fmt.Printf("[raw %d] %q\n", pidInt, data)
-
-			// Check for OSC 1337;CurrentDir= in the data field
-			if matches := oscCurrentDirPattern.FindStringSubmatch(data); len(matches) == 2 {
-				directory = matches[1]
-				fmt.Printf("[directory changed] %s\n", directory)
-			}
-
-			switch {
-			case strings.Contains(data, "\x1b]133;B\a"):
-				cmd := extractCommandFromOSC133B(data)
-				if cmd != "" {
-					fmt.Printf("[COMMAND START] Just entered: %q\n", cmd)
-					session.CommandString = cmd
-					session.State = StateCommand // Set state to Command
-					session.CommandBuffer = nil  // Clear previous buffer
-					session.StartTime = time.Now()
-					session.CommandId = fmt.Sprintf("%dN-%d", time.Now().Unix(), pidInt)
-					session.ExpectingCommand = false // Reset the flag as we found the command
-					// Send start event (no exitCode)
-					sendEvent(EventPayload{
-						Event:     "start",
-						Command:   cmd,
-						CommandId: session.CommandId,
-						Shell:     shell,
-						Username:  username,
-						Directory: directory,
-					})
-				} else {
-					// We saw OSC 133;B but no command on this line, expect it on the next line
-					session.ExpectingCommand = true
-					session.State = StateCommand
-					session.CommandBuffer = nil
-					session.StartTime = time.Now()
-					session.CommandId = fmt.Sprintf("%dN-%d", time.Now().Unix(), pidInt)
-				}
-			case strings.Contains(data, "\x1b]133;D"):
-				fmt.Printf("[debug] OSC 133;D: CommandBuffer=%v\n", session.CommandBuffer)
-				session.State = StatePrompt
-				// Do not append OSC 133;D to CommandBuffer, just handle exit code
-				exitCode := extractExitCode(data)
-				session.LastExitCode = exitCode
-				// Print command, exit code, and output directly
-				fmt.Printf("[COMMAND END] PID %d, exit=%d\n", session.PID, session.LastExitCode)
-				fmt.Printf("  Command: %q\n", session.CommandString)
-				for _, l := range session.CommandBuffer {
-					fmt.Printf("    %q\n", l)
-				}
-				fmt.Println("---")
-				// Send end event (always send exitCode as pointer)
-				endExitCode := exitCode
-				duration := int64(100) // Default 100ms
-				if !session.StartTime.IsZero() {
-					duration = time.Since(session.StartTime).Milliseconds()
-				}
-				sendEvent(EventPayload{
-					Event:     "end",
-					Command:   session.CommandString,
-					CommandId: session.CommandId,
-					Shell:     shell,
-					Username:  username,
-					Directory: directory,
-					ExitCode:  &endExitCode,
-					Duration:  duration,
-				})
-				session.CommandBuffer = nil
-				session.CommandString = ""
-				session.StartTime = time.Time{}
-				session.CurrentInput = ""
-			default:
-				if session.ExpectingCommand {
-					// This line might contain the command we're expecting
-					session.ExpectingCommand = false // Reset the flag
-					trimmed := strings.TrimSpace(data)
-					if strings.HasSuffix(trimmed, "\x1b[K") {
-						// Common pattern for command line ends with escape sequence for erasing to end of line
-						cmd := strings.TrimSuffix(trimmed, "\x1b[K")
-						if cmd != "" {
-							session.CommandString = cmd
-							fmt.Printf("[COMMAND START +] Found on next line: %q\n", cmd)
-							// Send start event (no exitCode)
-							sendEvent(EventPayload{
-								Event:     "start",
-								Command:   cmd,
-								CommandId: session.CommandId,
-								Shell:     shell,
-								Username:  username,
-								Directory: directory,
-							})
-						}
-					}
-				} else if session.State == StateCommand {
-					if isRealOutput(data) {
-						stepName, detail := matchStepEvent(data)
-						if stepName != "" {
-							if detail != nil && len(detail) > 0 {
-								detailJson, _ := json.Marshal(detail)
-								fmt.Printf("[step %s] %q detail=%s\n", stepName, data, detailJson)
-							} else {
-								fmt.Printf("[step %s] %q\n", stepName, data)
-							}
-							// Send step event to Electron app (no exitCode)
-							sendEvent(EventPayload{
-								Event:     "step",
-								Command:   session.CommandString,
-								CommandId: session.CommandId,
-								Shell:     shell,
-								Username:  username,
-								Directory: directory,
-								Name:      stepName,
-								Detail:    detail,
-								ShouldEnd: false,
-							})
-						}
-						session.CommandBuffer = append(session.CommandBuffer, data)
-					}
-				} else if session.State == StatePrompt {
-					session.PromptBuffer = append(session.PromptBuffer, data)
-				}
-			}
+			processAsciinemaEvent(trimmed, username, shell, sessions, &directory)
 		} else {
 			fmt.Printf("[unknown] %s\n", trimmed)
 		}
@@ -478,4 +339,261 @@ func handleConnection(conn net.Conn, wg *sync.WaitGroup, terminalInfo map[net.Co
 	if err := scanner.Err(); err != nil {
 		log.Printf("Error reading from connection: %v", err)
 	}
+}
+
+// processAsciinemaEvent parses and handles different types of asciinema events
+func processAsciinemaEvent(trimmedLine string, username, shell string, sessions map[int]*TerminalSession, directory *string) {
+	var arr []interface{}
+	err := json.Unmarshal([]byte(trimmedLine), &arr)
+	if err != nil || len(arr) < 3 {
+		fmt.Printf("[unknown] %s\n", trimmedLine)
+		return
+	}
+	
+	// Parse event components
+	eventCode, okCode := arr[1].(string)
+	data, okData := arr[2].(string)
+	
+	if !okCode || !okData {
+		fmt.Printf("[unknown] %s\n", trimmedLine)
+		return
+	}
+	
+	// Extract PID if available (V3 format)
+	var pidInt int
+	if len(arr) >= 4 {
+		if pid, okPid := arr[3].(float64); okPid {
+			pidInt = int(pid)
+		}
+	}
+	
+	// Handle different event types
+	switch eventCode {
+	case "m": // Marker event
+		// Check for terminal close event
+		if strings.HasPrefix(data, "terminal_close:") {
+			handleTerminalClose(data, pidInt, username, shell, sessions, *directory)
+			return
+		}
+		// Handle other markers if needed
+		fmt.Printf("[marker %d] %q\n", pidInt, data)
+		
+	case "o": // Output event
+		// This is the original output processing logic
+		session, exists := sessions[pidInt]
+		if !exists {
+			session = &TerminalSession{PID: pidInt, State: StateIdle}
+			sessions[pidInt] = session
+		}
+
+		// [raw <pid>] logging
+		fmt.Printf("[raw %d] %q\n", pidInt, data)
+
+		// Check for OSC 1337;CurrentDir= in the data field
+		if matches := oscCurrentDirPattern.FindStringSubmatch(data); len(matches) == 2 {
+			*directory = matches[1]
+			fmt.Printf("[directory changed] %s\n", *directory)
+		}
+
+		switch {
+		case strings.Contains(data, "\x1b]133;B\a"):
+			cmd := extractCommandFromOSC133B(data)
+			if cmd != "" {
+				fmt.Printf("[COMMAND START] Just entered: %q\n", cmd)
+				session.CommandString = cmd
+				session.State = StateCommand // Set state to Command
+				session.CommandBuffer = nil  // Clear previous buffer
+				session.StartTime = time.Now()
+				session.CommandId = fmt.Sprintf("%dN-%d", time.Now().Unix(), pidInt)
+				session.ExpectingCommand = false // Reset the flag as we found the command
+				// Send start event (no exitCode)
+				sendEvent(EventPayload{
+					Event:     "start",
+					Command:   cmd,
+					CommandId: session.CommandId,
+					Shell:     shell,
+					Username:  username,
+					Directory: *directory,
+				})
+			} else {
+				// We saw OSC 133;B but no command on this line, expect it on the next line
+				session.ExpectingCommand = true
+				session.State = StateCommand
+				session.CommandBuffer = nil
+				session.StartTime = time.Now()
+				session.CommandId = fmt.Sprintf("%dN-%d", time.Now().Unix(), pidInt)
+			}
+		case strings.Contains(data, "\x1b]133;D"):
+			fmt.Printf("[debug] OSC 133;D: CommandBuffer=%v\n", session.CommandBuffer)
+			session.State = StatePrompt
+			// Do not append OSC 133;D to CommandBuffer, just handle exit code
+			exitCode := extractExitCode(data)
+			session.LastExitCode = exitCode
+			// Print command, exit code, and output directly
+			fmt.Printf("[COMMAND END] PID %d, exit=%d\n", session.PID, session.LastExitCode)
+			fmt.Printf("  Command: %q\n", session.CommandString)
+			for _, l := range session.CommandBuffer {
+				fmt.Printf("    %q\n", l)
+			}
+			fmt.Println("---")
+			// Send end event (always send exitCode as pointer)
+			endExitCode := exitCode
+			duration := int64(100) // Default 100ms
+			if !session.StartTime.IsZero() {
+				duration = time.Since(session.StartTime).Milliseconds()
+			}
+			sendEvent(EventPayload{
+				Event:     "end",
+				Command:   session.CommandString,
+				CommandId: session.CommandId,
+				Shell:     shell,
+				Username:  username,
+				Directory: *directory,
+				ExitCode:  &endExitCode,
+				Duration:  duration,
+			})
+			session.CommandBuffer = nil
+			session.CommandString = ""
+			session.StartTime = time.Time{}
+			session.CurrentInput = ""
+		default:
+			if session.ExpectingCommand {
+				// This line might contain the command we're expecting
+				session.ExpectingCommand = false // Reset the flag
+				trimmed := strings.TrimSpace(data)
+				if strings.HasSuffix(trimmed, "\x1b[K") {
+					// Common pattern for command line ends with escape sequence for erasing to end of line
+					cmd := strings.TrimSuffix(trimmed, "\x1b[K")
+					if cmd != "" {
+						session.CommandString = cmd
+						fmt.Printf("[COMMAND START +] Found on next line: %q\n", cmd)
+						// Send start event (no exitCode)
+						sendEvent(EventPayload{
+							Event:     "start",
+							Command:   cmd,
+							CommandId: session.CommandId,
+							Shell:     shell,
+							Username:  username,
+							Directory: *directory,
+						})
+					}
+				}
+			} else if session.State == StateCommand {
+				if isRealOutput(data) {
+					stepName, detail := matchStepEvent(data)
+					if stepName != "" {
+						if detail != nil && len(detail) > 0 {
+							detailJson, _ := json.Marshal(detail)
+							fmt.Printf("[step %s] %q detail=%s\n", stepName, data, detailJson)
+						} else {
+							fmt.Printf("[step %s] %q\n", stepName, data)
+						}
+						// Send step event to Electron app (no exitCode)
+						sendEvent(EventPayload{
+							Event:     "step",
+							Command:   session.CommandString,
+							CommandId: session.CommandId,
+							Shell:     shell,
+							Username:  username,
+							Directory: *directory,
+							Name:      stepName,
+							Detail:    detail,
+							ShouldEnd: false,
+						})
+					}
+					session.CommandBuffer = append(session.CommandBuffer, data)
+				}
+			} else if session.State == StatePrompt {
+				session.PromptBuffer = append(session.PromptBuffer, data)
+			}
+		}
+		
+	case "i": // Input event
+		fmt.Printf("[input %d] %q\n", pidInt, data)
+		// Handle input events if needed
+		
+	case "r": // Resize event
+		fmt.Printf("[resize %d] %q\n", pidInt, data)
+		// Handle resize events if needed
+		
+	default:
+		fmt.Printf("[unknown_event %d] code=%q data=%q\n", pidInt, eventCode, data)
+	}
+}
+
+func handleTerminalClose(data string, pidInt int, username, shell string, sessions map[int]*TerminalSession, directory string) {
+	// Extract exit code from "terminal_close:{exit_code}"
+	parts := strings.SplitN(data, ":", 2)
+	if len(parts) != 2 {
+		fmt.Printf("[terminal_close %d] invalid format: %q\n", pidInt, data)
+		return
+	}
+	
+	exitCode, err := strconv.ParseInt(parts[1], 10, 32)
+	if err != nil {
+		fmt.Printf("[terminal_close %d] invalid exit code: %q\n", pidInt, parts[1])
+		return
+	}
+	
+	fmt.Printf("[TERMINAL CLOSE] PID %d, exit=%d\n", pidInt, exitCode)
+	
+	session, exists := sessions[pidInt]
+	if !exists {
+		// No session found, just send terminal close event
+		sendEvent(EventPayload{
+			Event:     "terminal_close",
+			Shell:     shell,
+			Username:  username,
+			Directory: directory,
+			ExitCode:  &exitCode,
+			ShouldEnd: true,
+		})
+		return
+	}
+	
+	// Get session data before cleanup
+	commandString := session.CommandString
+	commandId := session.CommandId
+	startTime := session.StartTime
+	state := session.State
+	
+	// Clean up session state
+	session.State = StateIdle
+	session.CommandBuffer = nil
+	session.CommandString = ""
+	session.StartTime = time.Time{}
+	session.CommandId = ""
+	
+	// Send end event if there was an active command
+	if state == StateCommand && commandString != "" {
+		duration := int64(100) // Default 100ms
+		if !startTime.IsZero() {
+			duration = time.Since(startTime).Milliseconds()
+		}
+		
+		endExitCode := int64(exitCode)
+		sendEvent(EventPayload{
+			Event:     "end",
+			Command:   commandString,
+			CommandId: commandId,
+			Shell:     shell,
+			Username:  username,
+			Directory: directory,
+			ExitCode:  &endExitCode,
+			Duration:  duration,
+		})
+		
+		fmt.Printf("[COMMAND END] PID %d, exit=%d\n", pidInt, exitCode)
+		fmt.Printf("  Command: %q\n", commandString)
+	}
+	
+	// Send terminal close event
+	sendEvent(EventPayload{
+		Event:     "terminal_close",
+		Shell:     shell,
+		Username:  username,
+		Directory: directory,
+		ExitCode:  &exitCode,
+		ShouldEnd: true,
+	})
 }

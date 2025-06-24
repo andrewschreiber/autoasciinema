@@ -101,6 +101,10 @@ impl From<session::Event> for asciicast::Event {
             session::Event::Resize(time, tty_size, pid) =>
                 asciicast::Event::resize(time, tty_size.into(), pid),
             session::Event::Marker(time, label, pid) => asciicast::Event::marker(time, label, pid),
+            session::Event::Close(time, exit_code, pid) => {
+                // Map close event to marker with exit code info
+                asciicast::Event::marker(time, format!("terminal_close:{}", exit_code), pid)
+            }
         }
     }
 }

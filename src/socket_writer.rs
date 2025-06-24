@@ -75,6 +75,7 @@ impl session::OutputStarter for SocketWriterStarter {
         child_pid: u32,
     ) -> io::Result<Box<dyn session::Output>> {
         let timestamp = time.duration_since(UNIX_EPOCH).unwrap().as_secs();
+        
         let header = asciicast::Header {
             term_cols: tty_size.0,
             term_rows: tty_size.1,
@@ -147,7 +148,7 @@ impl session::Output for SocketWriter {
         let event = match event {
             session::Event::Output(time, text, pid) =>
                 session::Event::Output(time, redact_all_filters(&text, &self.filters), pid),
-            other => other,
+            other => other, // Pass through Input, Resize, Marker, and Close events unchanged
         };
         let bytes = self.encoder.event(event.into());
         let _ = self.sender.try_send(bytes);

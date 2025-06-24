@@ -54,6 +54,7 @@ fn main() -> anyhow::Result<()> {
                 serve: None,
                 relay: None,
                 log_file: None,
+                debug_focusbase: false,
             };
 
             cmd.run(&config, &config.cmd_rec())
@@ -76,6 +77,7 @@ fn main() -> anyhow::Result<()> {
                 serve: stream.serve,
                 relay: stream.relay,
                 log_file: stream.log_file,
+                debug_focusbase: stream.debug_focusbase,
             };
 
             cmd.run(&config, &config.cmd_stream())
