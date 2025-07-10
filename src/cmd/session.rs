@@ -44,11 +44,11 @@ impl cli::Session {
         let command = self.get_command(cmd_config);
         let keys = get_key_bindings(cmd_config)?;
         let notifier = notifier::threaded(get_notifier(config));
-        let record_input = self.input || cmd_config.input;
-        let env = capture_env(self.env.clone(), cmd_config);
+        let record_input = self.args.input || cmd_config.input;
+        let env = capture_env(self.args.env.clone(), cmd_config);
 
         let path = self
-            .output
+            .args.output
             .take()
             .map(|path| self.ensure_filename(path, cmd_config))
             .transpose()?;
@@ -68,14 +68,14 @@ impl cli::Session {
             .transpose()?;
 
         let mut listener = self
-            .serve
+            .args.serve
             .take()
             .map(TcpListener::bind)
             .transpose()
             .context("cannot start listener")?;
 
         let mut relay = self
-            .relay
+            .args.relay
             .take()
             .map(|target| get_relay(target, config, self.get_term_type(), self.get_term_version()?, &env))
             .transpose()?;
@@ -138,7 +138,7 @@ impl cli::Session {
         let mut outputs: Vec<Box<dyn session::OutputStarter>> = Vec::new();
 
         // Always use SocketWriterStarter
-        let format = self.format.unwrap_or(Format::AsciicastV3);
+        let format = self.args.format.unwrap_or(Format::AsciicastV3);
         let _socket_term_type = self.get_term_type();
         let _socket_term_version = self.get_term_version()?;
         let encoder: Box<dyn crate::encoder::Encoder + Send> = match format {
@@ -153,9 +153,9 @@ impl cli::Session {
         let metadata = SocketMetadata {
             term_type: _socket_term_type,
             term_version: _socket_term_version,
-            idle_time_limit: self.idle_time_limit.or(cmd_config.idle_time_limit),
+            idle_time_limit: self.args.idle_time_limit.or(cmd_config.idle_time_limit),
             command: self.get_command(cmd_config),
-            title: self.title.clone(),
+            title: self.args.title.clone(),
             env: Some(env.clone()),
             username,
             directory,
@@ -196,7 +196,7 @@ impl cli::Session {
             let child_pid = process::id();
             
             // Log terminal session if debug flag is enabled
-            if self.debug_focusbase {
+            if self.args.debug_focusbase {
                 let _ = log_terminal_session(child_pid);
             }
             
@@ -229,7 +229,7 @@ impl cli::Session {
         let mut path = PathBuf::from(&path_);
 
         if path.exists() && fs::metadata(&path)?.is_dir() {
-            let mut tpl = self.filename.clone().unwrap_or(config.filename.clone());
+            let mut tpl = self.args.filename.clone().unwrap_or(config.filename.clone());
 
             if tpl.contains("{pid}") {
                 let pid = process::id().to_string();
@@ -272,7 +272,7 @@ impl cli::Session {
         env: &HashMap<String, String>,
         notifier: N,
     ) -> Result<FileWriterStarter> {
-        let format = self.format.unwrap_or_else(|| {
+        let format = self.args.format.unwrap_or_else(|| {
             if path.to_lowercase().ends_with(".txt") {
                 Format::Txt
             } else {
@@ -280,8 +280,8 @@ impl cli::Session {
             }
         });
 
-        let mut overwrite = self.overwrite;
-        let mut append = self.append;
+        let mut overwrite = self.args.overwrite;
+        let mut append = self.args.append;
         let path = Path::new(path);
 
         if path.exists() {
@@ -378,7 +378,7 @@ impl cli::Session {
     }
 
     fn get_command(&self, config: &config::Session) -> Option<String> {
-        self.command.as_ref().cloned().or(config.command.clone())
+        self.args.command.as_ref().cloned().or(config.command.clone())
     }
 
     fn build_asciicast_metadata(
@@ -388,7 +388,7 @@ impl cli::Session {
         env: &HashMap<String, String>,
         config: &config::Session,
     ) -> Metadata {
-        let idle_time_limit = self.idle_time_limit.or(config.idle_time_limit);
+        let idle_time_limit = self.args.idle_time_limit.or(config.idle_time_limit);
         let command = self.get_command(config);
 
         Metadata {
@@ -396,15 +396,15 @@ impl cli::Session {
             term_version,
             idle_time_limit,
             command,
-            title: self.title.clone(),
+            title: self.args.title.clone(),
             env: Some(env.clone()),
         }
     }
 
     fn get_tty(&self, quiet: bool) -> Result<impl Tty> {
-        let (cols, rows) = self.tty_size.unwrap_or((None, None));
+        let (cols, rows) = self.args.tty_size.unwrap_or((None, None));
 
-        if self.headless {
+        if self.args.headless {
             Ok(FixedSizeTty::new(NullTty::open()?, cols, rows))
         } else if let Ok(dev_tty) = DevTty::open() {
             Ok(FixedSizeTty::new(dev_tty, cols, rows))
@@ -418,7 +418,7 @@ impl cli::Session {
     }
 
     fn init_logging(&self) -> Result<()> {
-        let log_file = self.log_file.as_ref().cloned();
+        let log_file = self.args.log_file.as_ref().cloned();
 
         if let Some(path) = &log_file {
             let file = OpenOptions::new()
